@@ -13,6 +13,9 @@
 #include "V7Image.h"
 
 #define MAX_INVADERS 40
+#define THRUST_DEF .00003f
+#define THRUST_DEC .000005f
+#define THRUST_INC .00001f
 
 Scene *scn;
 Model *sky, *spaceship, *afterburner, *flyx, *wasper, *invader[MAX_INVADERS];
@@ -87,7 +90,7 @@ static void Setup(V7V *v7v) {
 }
 
 // Thrust adds force in the direction plane is pointing
-float pitch, roll, thrust = .00003f;
+float pitch, roll, thrust = THRUST_DEF;
 // Motion vector - independent of plane orientation
 vec3 velocity = {0.0f, 0.0f, 0.0f};
 
@@ -99,20 +102,16 @@ static void Loop(V7V *v7v) {
         v7v->quit=1;
     }
     
-    // Forward/Backward: W/S
-    if (v7v->key[_W_]) {
-        thrust+=.00001f;
+    // Thrust: W/S
+    if (v7v->key[_W_]||v7v->key[_S_]) {
+        if (v7v->key[_W_]) thrust+=THRUST_INC;
+        if (v7v->key[_S_]) thrust-=THRUST_INC;
     } else {
-        if(thrust-.000005f>.00002f) thrust-=.000005f;
-         else thrust=.00002f;
+        if(thrust>THRUST_DEF+THRUST_INC) { thrust-=THRUST_DEC; } else
+        if(thrust<THRUST_DEF+THRUST_INC) { thrust+=THRUST_DEC; }
     }
 
-
-    if (v7v->key[_S_]) {
-        scn->ubo.eye[2] += speedo;
-        scn->ubo.center[2] += speedo;
-    }
-
+    // Steering: I/J/K/L
     if (v7v->key[_J_]||v7v->key[_K_]||v7v->key[_L_]||v7v->key[_I_]) {
         if (v7v->key[_J_]) roll+=.002f;
         if (v7v->key[_L_]) roll-=.002f;

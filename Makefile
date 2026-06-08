@@ -56,7 +56,7 @@ $(SHADER_HEADER): $(SHADER_SRCS) | $(BUILD_DIR)
 	@echo "#endif // SHADERS_H" >> $@
 	@echo "Generated $@"
 
-$(BUILD_DIR)/%.o: %.c *.h $(SHADER_HEADER) | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: %.c $(SHADER_HEADER) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 UglyInvaders: $(OBJS)
