@@ -42,6 +42,7 @@ $(SHADER_HEADER): $(SHADER_SRCS) | $(BUILD_DIR)
 	@for shader in $(sort $(SHADER_SRCS)); do name=$$(basename $$shader .glsl); \
 		if echo $$name | grep -q "_vert$$"; then stage=vertex; \
 		elif echo $$name | grep -q "_frag$$"; then stage=fragment; \
+		elif echo $$name | grep -q "_geom$$"; then stage=geometry; \
 		else continue; \
 		fi; \
 		glslc -fshader-stage=$$stage $$shader -o $(BUILD_DIR)/$$name.spv; \

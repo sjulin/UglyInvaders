@@ -66,6 +66,9 @@ static void Setup(V7V *v7v) {
 
     flyx = LoadGLB(v7v, "Flyx");
     wasper = LoadGLB(v7v, "Wasper");
+    
+    V7VMove(flyx, -4.0f,-10.f,-2.f);
+    V7VMove(wasper, 4.0f,-10.f,2.f);
 
     for(int i=0; i<MAX_INVADERS; i++) {
         char name[16]; sprintf(name, "Invader%02d", i);
@@ -74,8 +77,8 @@ static void Setup(V7V *v7v) {
             invader[i]->msh = flyx->msh;
         else invader[i]->msh = wasper->msh;
 
-        V7VScale(invader[i], .1f);
-        V7VMove(invader[i], (i%8)/10.f-.4f, (i/8)/20.f+.2f, 1.5f );
+        V7VScale(invader[i], .5f);
+        V7VMove(invader[i], (i%8)/2.f-2.f, (i/8)/4.f+2.f, 10.f );
 
     }
 
