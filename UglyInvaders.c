@@ -12,13 +12,20 @@
 #include "V7Util.h"
 #include "V7Image.h"
 
+#include "font/sdf_master_breaker.h"
+#include "font/sdf_topaz.h"
+
+
 #define MAX_INVADERS 40
 #define THRUST_DEF .00003f
 #define THRUST_DEC .000005f
 #define THRUST_INC .00001f
 
+float leveling;
+
 Scene *scn;
 Model *sky, *spaceship, *afterburner, *flyx, *wasper, *invader[MAX_INVADERS];
+Model *logo, *txt1, *txt2;
 
 V7Image *img;
 
@@ -60,9 +67,15 @@ static void Setup(V7V *v7v) {
 //    afterburner = LoadGLB(v7v, "Afterburner");
 //    V7VParent(afterburner, spaceship);
 
+    txt1 = V7NewTxt(v7v, "TitleTxt", &sdf_topaz);
+	V7Txt(txt1, "\x02""UglyInvaders\n");
+    V7VMove(txt1, 0,20,20);
+
     V7VScale(spaceship, .05f);
 
     V7VMove(spaceship, .0f,-1.f,-2.f);
+
+    logo = LoadGLB(v7v, "UglyInvaders");
 
     flyx = LoadGLB(v7v, "Flyx");
     wasper = LoadGLB(v7v, "Wasper");
@@ -90,6 +103,7 @@ static void Setup(V7V *v7v) {
 
     scn->ubo.cloudCoverage = 0.6f;
     scn->ubo.cloudSharpness = 0.7f;
+
 }
 
 // Thrust adds force in the direction plane is pointing
@@ -114,12 +128,51 @@ static void Loop(V7V *v7v) {
         if(thrust<THRUST_DEF+THRUST_INC) { thrust+=THRUST_DEC; }
     }
 
+    // Get plane's current orientation vectors first (before applying new rotations)
+    vec3 upVec, forwardVec, rightVec;
+    glm_quat_rotatev(spaceship->r, xaxis, rightVec);
+    glm_quat_rotatev(spaceship->r, yaxis, upVec);
+    glm_quat_rotatev(spaceship->r, zaxis, forwardVec);
+    
+    // Auto homing: gradually point towards origin
+    if (v7v->key[_A_]) {
+        vec3 origin = {0.0f, 4.0f, 10.0f};
+        vec3 toOrigin;
+        glm_vec3_sub(origin, spaceship->t, toOrigin);
+        
+        float distToOrigin = glm_vec3_norm(toOrigin);
+        if (distToOrigin > 0.1f) {
+            // Normalize direction to origin
+            glm_vec3_normalize(toOrigin);
+            
+            // How much is target to the right/left of plane's forward direction?
+            float rightError = glm_vec3_dot(toOrigin, rightVec);
+            // Roll to bank into the turn (negative to turn toward target)
+            roll -= rightError * 0.001f;
+            
+            // How much is target above/below plane's forward direction?
+            float upError = glm_vec3_dot(toOrigin, upVec);
+            // Pitch to aim up/down (negative to pitch toward target)
+            pitch -= upError * 0.0008f;
+            
+            // How aligned are we with target? (forward dot toOrigin)
+            float alignment = glm_vec3_dot(forwardVec, toOrigin);
+            // If not well aligned, increase roll to turn faster
+            if (alignment < 0.9f) {
+                roll -= rightError * 0.0015f;
+            }
+        }
+    }
+
     // Steering: I/J/K/L
     if (v7v->key[_J_]||v7v->key[_K_]||v7v->key[_L_]||v7v->key[_I_]) {
-        if (v7v->key[_J_]) roll+=.002f;
-        if (v7v->key[_L_]) roll-=.002f;
+        if (v7v->key[_J_]) { roll+=.002f;  }
+        if (v7v->key[_L_]) { roll-=.002f;  }
         if (v7v->key[_I_]) pitch+=.001f;
         if (v7v->key[_K_]) pitch-=.001f;
+        leveling = 0.f;
+    } else {
+        if(leveling<0.005) leveling +=0.0001;
     }
 
     if (v7v->key[_LEFT_]) {
@@ -142,18 +195,30 @@ static void Loop(V7V *v7v) {
         roll *= 0.95f;
     }
     
-    // Get plane's orientation vectors
-    vec3 upVec, forwardVec, rightVec;
+    // Recalculate orientation vectors after rotations
     glm_quat_rotatev(spaceship->r, xaxis, rightVec);
     glm_quat_rotatev(spaceship->r, yaxis, upVec);
     glm_quat_rotatev(spaceship->r, zaxis, forwardVec);
     
-    // Auto-leveling: slowly correct banking toward wings-level
+    // Auto-leveling: slowly correct banking and pitch toward level flight
     // rightVec[1] tells us bank: 0 = level, >0 = banked right, <0 = banked left
     float currentBank = rightVec[1];
-    float levelingStrength = 0.002f;  // Adjust this for faster/slower auto-level
-    float levelingRoll = -currentBank * levelingStrength;
+    // forwardVec[1] tells us pitch: 0 = level, >0 = nose up, <0 = nose down
+    float currentPitch = forwardVec[1];
+
+    if(leveling<0.005) leveling +=0.0001;
+    
+    // Correct roll toward level
+    float levelingRoll = -currentBank * leveling;
     V7VRotate(spaceship, zaxis, levelingRoll);
+    
+    // Correct pitch toward level
+    float levelingPitch = -currentPitch * leveling;
+    V7VRotate(spaceship, xaxis, levelingPitch);
+    
+    // Recalculate orientation vectors after leveling corrections
+    glm_quat_rotatev(spaceship->r, yaxis, upVec);
+    glm_quat_rotatev(spaceship->r, zaxis, forwardVec);
     
     vec3 thrustVec;
     glm_vec3_scale(forwardVec, thrust, thrustVec);
