@@ -4,11 +4,19 @@ layout(location = 0) in vec3 inTexCoord;
 
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 1) uniform SceneUBO {
+layout(set = 0, binding = 3) uniform GPUContext {
+    uint width;
+    uint height;
+    float aspect;
+    float time;
+    uint frame;
+} ctx;
+
+layout(set = 0, binding = 1) uniform GPUScene {
     mat4 view;
     mat4 proj;
     vec3 eye;
-    float padding1;
+    float time;
     vec3 center;
     float padding2;
     vec3 up;
@@ -30,7 +38,7 @@ layout(set = 0, binding = 1) uniform SceneUBO {
 layout(set = 1, binding = 0) uniform sampler2D textures[16];
 
 layout(push_constant) uniform PushConstants {
-    uint instanceIndex;
+    uint modIdx;
 } pc;
 
 // 3D noise functions for seamless clouds

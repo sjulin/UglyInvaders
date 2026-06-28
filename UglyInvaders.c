@@ -18,13 +18,15 @@
 
 #define MAX_INVADERS 40
 #define THRUST_DEF .00003f
-#define THRUST_DEC .000005f
-#define THRUST_INC .00001f
+#define THRUST_DEC .0001f
+#define THRUST_INC .0001f
+#define MAX_SHOTS 100
+#define SHOT_SPEED 0.08f
 
 float leveling;
 
 Scene *scn;
-Model *sky, *spaceship, *afterburner, *flyx, *wasper, *invader[MAX_INVADERS];
+Model *sky, *spaceship, *afterburner, *gunfire, *flyx, *wasper, *invader[MAX_INVADERS];
 Model *logo, *txt1, *txt2;
 
 V7Image *img;
@@ -66,16 +68,36 @@ static void Setup(V7V *v7v) {
     spaceship = LoadGLB(v7v, "Spaceship2");
 //    afterburner = LoadGLB(v7v, "Afterburner");
 //    V7VParent(afterburner, spaceship);
-
-    txt1 = V7NewTxt(v7v, "TitleTxt", &sdf_topaz);
-	V7Txt(txt1, "\x02""UglyInvaders\n");
-    V7VMove(txt1, 0,20,20);
-
     V7VScale(spaceship, .05f);
-
     V7VMove(spaceship, .0f,-1.f,-2.f);
 
-    logo = LoadGLB(v7v, "UglyInvaders");
+    // Create gunfire mesh pre-allocated for MAX_SHOTS
+    vec4 yellow = {1.0f, 1.0f, 0.0f, 1.0f};
+    gunfire = V7VNewMod(v7v, "gunfire");
+    gunfire->msh = V7VNewMsh(v7v, "");
+    gunfire->msh->vvtx = vec_create(MAX_SHOTS * 2, sizeof(LineVertex));
+    gunfire->msh->vidx = vec_create(MAX_SHOTS * 2, sizeof(uint32_t));
+    gunfire->msh->flags = 0;
+    gunfire->msh->mtr = NULL;
+    gunfire->pipeline = v7v->vc->linePipeline;
+    
+    // Initialize all shot vertices to inactive (both at origin = zero length)
+    LineVertex vtx;
+    memset(&vtx, 0, sizeof(LineVertex));
+    glm_vec4_copy(yellow, vtx.color);
+    vtx.color[3] = 0.0f;  // Alpha = 0 means inactive
+    vtx.thickness = 0.01f;
+    vtx.position[0] = 0.0f;
+    vtx.position[1] = 0.0f;
+    vtx.position[2] = 0.0f;
+    
+    for(int i = 0; i < MAX_SHOTS; i++) {
+        vec_push(&gunfire->msh->vvtx, &vtx);
+        vec_push(&gunfire->msh->vvtx, &vtx);
+    }
+    // Don't add indices yet - they'll be added per frame for active shots only
+    
+    V7VUploadMesh(v7v, gunfire->msh);
 
     flyx = LoadGLB(v7v, "Flyx");
     wasper = LoadGLB(v7v, "Wasper");
@@ -104,6 +126,26 @@ static void Setup(V7V *v7v) {
     scn->ubo.cloudCoverage = 0.6f;
     scn->ubo.cloudSharpness = 0.7f;
 
+    txt1 = V7NewTxt(v7v, "ScoreTxt", &sdf_topaz);
+    V7Txt(txt1, "HIGH SCORE       1UP %8d\n", 0);
+    V7SET(txt1->flags, V7OVERLAY);
+    V7Scale(txt1, .05f);
+    V7Move(txt1, .0f, .4f, -1.5f);
+    V7MeshCol(txt1->msh, 1.f, .5f, 1.f, .5f);
+
+    txt2 = V7NewTxt(v7v, "FlightTxt", &sdf_topaz);
+    V7Txt(txt2, "THRUST\nALTITUDE\nSPEED\n");
+    V7SET(txt2->flags, V7OVERLAY);
+    V7Scale(txt2, .05f);
+    V7Move(txt2, -.8f, .4f, -1.5f);
+    V7MeshCol(txt2->msh, 1.f, .5f, 1.f, .5f);
+
+    logo = LoadGLB(v7v, "UglyInvaders");
+    V7SET(logo->flags, V7OVERLAY);
+    V7Move(logo, -.1f, .2f, -7.f);
+
+//    scn->ubo.eye
+
 }
 
 // Thrust adds force in the direction plane is pointing
@@ -114,9 +156,14 @@ vec3 velocity = {0.0f, 0.0f, 0.0f};
 static void Loop(V7V *v7v) {
     
     float speedo = 0.05f;
-
+ 
     if (v7v->key[_ESC_]) {
         v7v->quit=1;
+    }
+
+    if (v7v->key[_SPACE_]) {
+        scn->ubo.time=0.f;
+        V7Move(logo, -.1f, .2f, -7.f);
     }
     
     // Thrust: W/S
@@ -134,7 +181,7 @@ static void Loop(V7V *v7v) {
     glm_quat_rotatev(spaceship->r, yaxis, upVec);
     glm_quat_rotatev(spaceship->r, zaxis, forwardVec);
     
-    // Auto homing: gradually point towards origin
+    // Auto homing: gradually point towards origin=
     if (v7v->key[_A_]) {
         vec3 origin = {0.0f, 4.0f, 10.0f};
         vec3 toOrigin;
@@ -276,9 +323,8 @@ static void Loop(V7V *v7v) {
     if (v7v->key[_V_]) { scn->ubo.cloudSharpness += 0.02f; }
 
     // Animate day/night cycle
-    static float time = 0.0f;
-    time += 0.001f;
-    float blend = (sin(time) + 1.0f) * 0.5f; // Oscillate between 0 and 1
+    scn->ubo.time += 0.001f;
+    float blend = (sin(scn->ubo.time) + 1.0f) * 0.5f; // Oscillate between 0 and 1
     
     // Day colors - 5 step gradient
     vec3 dayZenith = {0.1f, 0.3f, 0.6f};      // Deep blue at top
@@ -303,9 +349,100 @@ static void Loop(V7V *v7v) {
     glm_vec3_lerp(nightNadir, dayNadir, blend, scn->ubo.nadirColor);
 
     // Animate clouds
-    scn->ubo.cloudOffset[0] = time * 0.02f;
-    scn->ubo.cloudOffset[1] = time * -0.1f;
-    scn->ubo.cloudOffset[2] = time * 0.01f;  // Slower drift in Z
+    scn->ubo.cloudOffset[0] = scn->ubo.time * 0.02f;
+    scn->ubo.cloudOffset[1] = scn->ubo.time * -0.1f;
+    scn->ubo.cloudOffset[2] = scn->ubo.time * 0.01f;  // Slower drift in Z
+
+    V7Txt(txt2, "THRUST %.2f\nALTITUDE %.0f\nSPEED %.2f\n", thrust*50.f, spaceship->t[1]*100.f, airspeed*100.f);
+
+    if(scn->ubo.time > 0.09f)
+        V7MoveZ(logo, 0.1f);
+
+    if(v7v->key[_E_]) {
+        // Fire two parallel shots
+        vec3 forwardVec, rightVec;
+        glm_quat_rotatev(spaceship->r, zaxis, forwardVec);
+        glm_quat_rotatev(spaceship->r, xaxis, rightVec);
+        
+        LineVertex *verts = (LineVertex*)gunfire->msh->vvtx.arr;
+        int fired = 0;
+        
+        for(int i = 0; i < MAX_SHOTS && fired < 2; i++) {
+            // Check if slot is inactive using alpha
+            if(verts[i*2].color[3] < 0.01f) { // Inactive slot
+                vec3 offset;
+                float side = (fired == 0) ? -0.03f : 0.03f;
+                glm_vec3_scale(rightVec, side, offset);
+                
+                vec3 start, end;
+                glm_vec3_add(spaceship->t, offset, start);
+                glm_vec3_scale(forwardVec, 0.10f, offset); // Line length 0.10
+                glm_vec3_add(start, offset, end);
+                
+                glm_vec3_copy(start, verts[i*2].position);
+                glm_vec3_copy(end, verts[i*2+1].position);
+                verts[i*2].color[3] = 1.0f;  // Reset alpha (lifetime indicator)
+                verts[i*2+1].color[3] = 1.0f;
+                fired++;
+            }
+        }
+    }
+    
+    // Update all shots in mesh
+    LineVertex *verts = (LineVertex*)gunfire->msh->vvtx.arr;
+    vec_resize(&gunfire->msh->vidx, 0); // Clear indices, rebuild only for active shots
+    
+    for(int i = 0; i < MAX_SHOTS; i++) {
+        // Check if shot is active using alpha channel (lifetime)
+        if(verts[i*2].color[3] > 0.01f) {
+            // Decrease lifetime (alpha) FIRST
+            verts[i*2].color[3] -= 0.0083f;  // 1.0 / 120 frames
+            verts[i*2+1].color[3] = verts[i*2].color[3];
+            
+            // Stop rendering early to avoid any end-of-life artifacts
+            if(verts[i*2].color[3] > 0.1f) {
+                vec3 start, end, diff;
+                glm_vec3_copy(verts[i*2].position, start);
+                glm_vec3_copy(verts[i*2+1].position, end);
+                glm_vec3_sub(end, start, diff);
+                
+                // Move both vertices by same amount to preserve line exactly
+                vec3 dir;
+                glm_vec3_normalize_to(diff, dir);
+                
+                vec3 movement;
+                glm_vec3_scale(dir, SHOT_SPEED, movement);
+                glm_vec3_add(start, movement, start);
+                glm_vec3_add(end, movement, end);
+                
+                // Update position
+                glm_vec3_copy(start, verts[i*2].position);
+                glm_vec3_copy(end, verts[i*2+1].position);
+                // Still active - update position
+                glm_vec3_copy(start, verts[i*2].position);
+                glm_vec3_copy(end, verts[i*2+1].position);
+                
+                // Add indices for this active shot
+                uint32_t i0 = i * 2;
+                uint32_t i1 = i * 2 + 1;
+                vec_push(&gunfire->msh->vidx, &i0);
+                vec_push(&gunfire->msh->vidx, &i1);
+            } else if(verts[i*2].color[3] <= 0.01f) {
+                // Fully expired - zero out
+                vec3 zero = {0.0f, 0.0f, 0.0f};
+                glm_vec3_copy(zero, verts[i*2].position);
+                glm_vec3_copy(zero, verts[i*2+1].position);
+                verts[i*2].color[3] = 0.0f;
+                verts[i*2+1].color[3] = 0.0f;
+            }
+            // If between 0.01 and 0.15, just don't render (fading out phase)
+        }
+    }
+    
+    V7VUploadMesh(v7v, gunfire->msh);
+
+
+
 
 }
 

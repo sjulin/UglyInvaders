@@ -7,11 +7,22 @@ layout(location = 3) in vec3 inTangent;
 
 layout(location = 0) out vec3 outTexCoord;
 
-layout(set = 0, binding = 0) readonly buffer InstanceBuffer {
-    mat4 models[];
-} instances;
+layout(push_constant) uniform PushConstants {
+    uint modIdx;
+} pc;
 
-layout(set = 0, binding = 1) uniform SceneUBO {
+struct GPUModel {
+    mat4 modMtx;
+    mat4 norMtx;
+    uint mtrIdx;
+    uint flags;
+    uint padding[2];
+};
+
+layout(set = 0, binding = 0) readonly buffer GPUModelBuf {
+    GPUModel models[];
+};
+layout(set = 0, binding = 1) uniform GPUScene {
     mat4 view;
     mat4 proj;
     vec3 eye;
@@ -33,10 +44,6 @@ layout(set = 0, binding = 1) uniform SceneUBO {
     vec3 cloudOffset;
     float cloudSharpness;
 } scene;
-
-layout(push_constant) uniform PushConstants {
-    uint instanceIndex;
-} pc;
 
 void main() {
     // Sky dome stays centered on camera
