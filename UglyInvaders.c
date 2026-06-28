@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
+#include <stdbool.h>
 
 #define VECTOR_IMPLEMENTATION
 
@@ -20,8 +21,9 @@
 #define THRUST_DEF .00003f
 #define THRUST_DEC .0001f
 #define THRUST_INC .0001f
+#define THRUST_MAX 1.f/50.f
 #define MAX_SHOTS 100
-#define SHOT_SPEED 0.08f
+#define SHOT_SPEED 0.1f
 
 float leveling;
 
@@ -31,10 +33,10 @@ Model *logo, *txt1, *txt2;
 
 V7Image *img;
 
-
+uint8_t gun_energy = 4;
 
 typedef struct {
-    char *name;
+    const char *name;
     enum type;
 } LoadList;
 
@@ -65,39 +67,20 @@ static void Setup(V7V *v7v) {
 
     vec_reserve(&v7v->scn->vmod, 128); // Up to 128 Models in scene
 
+    // Create skybox
+    sky = V7VNewMod(v7v, "sky");
+    sky->msh = V7VCreateSkyBox(v7v, 1000.0f);
+    V7VUploadMesh(v7v, sky->msh);
+    sky->pipeline = v7v->vc->skyPipeline;
+
+    scn->ubo.cloudCoverage = 0.6f;
+    scn->ubo.cloudSharpness = 0.7f;
+
     spaceship = LoadGLB(v7v, "Spaceship2");
 //    afterburner = LoadGLB(v7v, "Afterburner");
 //    V7VParent(afterburner, spaceship);
     V7VScale(spaceship, .05f);
     V7VMove(spaceship, .0f,-1.f,-2.f);
-
-    // Create gunfire mesh pre-allocated for MAX_SHOTS
-    vec4 yellow = {1.0f, 1.0f, 0.0f, 1.0f};
-    gunfire = V7VNewMod(v7v, "gunfire");
-    gunfire->msh = V7VNewMsh(v7v, "");
-    gunfire->msh->vvtx = vec_create(MAX_SHOTS * 2, sizeof(LineVertex));
-    gunfire->msh->vidx = vec_create(MAX_SHOTS * 2, sizeof(uint32_t));
-    gunfire->msh->flags = 0;
-    gunfire->msh->mtr = NULL;
-    gunfire->pipeline = v7v->vc->linePipeline;
-    
-    // Initialize all shot vertices to inactive (both at origin = zero length)
-    LineVertex vtx;
-    memset(&vtx, 0, sizeof(LineVertex));
-    glm_vec4_copy(yellow, vtx.color);
-    vtx.color[3] = 0.0f;  // Alpha = 0 means inactive
-    vtx.thickness = 0.01f;
-    vtx.position[0] = 0.0f;
-    vtx.position[1] = 0.0f;
-    vtx.position[2] = 0.0f;
-    
-    for(int i = 0; i < MAX_SHOTS; i++) {
-        vec_push(&gunfire->msh->vvtx, &vtx);
-        vec_push(&gunfire->msh->vvtx, &vtx);
-    }
-    // Don't add indices yet - they'll be added per frame for active shots only
-    
-    V7VUploadMesh(v7v, gunfire->msh);
 
     flyx = LoadGLB(v7v, "Flyx");
     wasper = LoadGLB(v7v, "Wasper");
@@ -117,14 +100,35 @@ static void Setup(V7V *v7v) {
 
     }
 
-    // Create skybox
-    sky = V7VNewMod(v7v, "sky");
-    sky->msh = V7VCreateSkyBox(v7v, 1000.0f);
-    V7VUploadMesh(v7v, sky->msh);
-    sky->pipeline = v7v->vc->skyPipeline;
+    // Create gunfire mesh pre-allocated for MAX_SHOTS
+    vec4 yellow = {1.0f, 1.0f, 0.0f, 1.0f};
+    gunfire = V7VNewMod(v7v, "Gunfire");
+    gunfire->msh = V7VNewMsh(v7v, "Gunfire");
+    gunfire->msh->vvtx = vec_create(MAX_SHOTS * 2, sizeof(Vertex));
+    gunfire->msh->vidx = vec_create(MAX_SHOTS * 2, sizeof(uint16_t));
+    gunfire->msh->flags = 0;
+    gunfire->msh->mtr = NULL;
+    gunfire->pipeline = v7v->vc->linePipeline;
 
-    scn->ubo.cloudCoverage = 0.6f;
-    scn->ubo.cloudSharpness = 0.7f;
+    // Initialize all shot vertices to inactive (both at origin = zero length)
+    Vertex vtx;
+    memset(&vtx, 0, sizeof(Vertex));
+    glm_vec4_copy(yellow, vtx.color);
+    vtx.color[3] = 0.0f;  // Alpha = 0 means inactive
+    vtx.thickness = 0.01f;
+    vtx.position[0] = 0.0f;
+    vtx.position[1] = 0.0f;
+    vtx.position[2] = 0.0f;
+    
+    for(int i = 0; i < MAX_SHOTS; i++) {
+        vec_push(&gunfire->msh->vvtx, &vtx);
+        vec_push(&gunfire->msh->vvtx, &vtx);
+    }
+    // Don't add indices yet - they'll be added per frame for active shots only
+    
+    V7VUploadMesh(v7v, gunfire->msh);
+
+
 
     txt1 = V7NewTxt(v7v, "ScoreTxt", &sdf_topaz);
     V7Txt(txt1, "HIGH SCORE       1UP %8d\n", 0);
@@ -143,8 +147,6 @@ static void Setup(V7V *v7v) {
     logo = LoadGLB(v7v, "UglyInvaders");
     V7SET(logo->flags, V7OVERLAY);
     V7Move(logo, -.1f, .2f, -7.f);
-
-//    scn->ubo.eye
 
 }
 
@@ -174,6 +176,8 @@ static void Loop(V7V *v7v) {
         if(thrust>THRUST_DEF+THRUST_INC) { thrust-=THRUST_DEC; } else
         if(thrust<THRUST_DEF+THRUST_INC) { thrust+=THRUST_DEC; }
     }
+
+    if(thrust>THRUST_MAX) thrust=THRUST_MAX;
 
     // Get plane's current orientation vectors first (before applying new rotations)
     vec3 upVec, forwardVec, rightVec;
@@ -213,8 +217,8 @@ static void Loop(V7V *v7v) {
 
     // Steering: I/J/K/L
     if (v7v->key[_J_]||v7v->key[_K_]||v7v->key[_L_]||v7v->key[_I_]) {
-        if (v7v->key[_J_]) { roll+=.002f;  }
-        if (v7v->key[_L_]) { roll-=.002f;  }
+        if (v7v->key[_J_]) { roll-=.002f;  }
+        if (v7v->key[_L_]) { roll+=.002f;  }
         if (v7v->key[_I_]) pitch+=.001f;
         if (v7v->key[_K_]) pitch-=.001f;
         leveling = 0.f;
@@ -310,7 +314,45 @@ static void Loop(V7V *v7v) {
     // Update position based on velocity vector
     glm_vec3_add(spaceship->t, velocity, spaceship->t);
     
+    /* CAMERA: SPACESHIP BETWEEN US AND INVADERS */
+    
+    // Calculate center of invader formation
+    vec3 invaderCenter = {0.0f, 0.0f, 0.0f};
+    for(int i = 0; i < MAX_INVADERS; i++) {
+        glm_vec3_add(invaderCenter, invader[i]->t, invaderCenter);
+    }
+    glm_vec3_scale(invaderCenter, 1.0f / MAX_INVADERS, invaderCenter);
+    
+    // Get spaceship orientation
+    vec3 spaceshipForward, spaceshipUp;
+    glm_quat_rotatev(spaceship->r, zaxis, spaceshipForward);
+    glm_quat_rotatev(spaceship->r, yaxis, spaceshipUp);
+    
+    // Position camera behind the spaceship
+    vec3 idealCameraPos, offset;
+    glm_vec3_scale(spaceshipForward, -5.0f, offset);  // 5 units behind for wider view
+    glm_vec3_add(spaceship->t, offset, idealCameraPos);
+    glm_vec3_scale(spaceshipUp, 1.5f, offset);  // 1.5 units above
+    glm_vec3_add(idealCameraPos, offset, idealCameraPos);
+    
+    // Smooth camera follow
+    vec3 cameraMovement;
+    glm_vec3_sub(idealCameraPos, scn->ubo.eye, cameraMovement);
+    glm_vec3_scale(cameraMovement, 0.01f, cameraMovement);
+    glm_vec3_add(scn->ubo.eye, cameraMovement, scn->ubo.eye);
+    
+    // Look at a point between spaceship and invaders (keep spaceship in frame)
+    vec3 lookAtTarget;
+    glm_vec3_lerp(spaceship->t, invaderCenter, 0.4f, lookAtTarget);  // 40% toward invaders
+    
+    vec3 lookAtMovement;
+    glm_vec3_sub(lookAtTarget, scn->ubo.center, lookAtMovement);
+    glm_vec3_scale(lookAtMovement, 0.8f, lookAtMovement);
+//    glm_vec3_add(scn->ubo.center, lookAtMovement, scn->ubo.center);
+
     glm_vec3_copy(spaceship->t, scn->ubo.center);
+
+
     
     if (v7v->key[_UP_]) {
     }
@@ -358,20 +400,20 @@ static void Loop(V7V *v7v) {
     if(scn->ubo.time > 0.09f)
         V7MoveZ(logo, 0.1f);
 
-    if(v7v->key[_E_]) {
+    if(v7v->key[_E_] && gun_energy > 3) {
         // Fire two parallel shots
         vec3 forwardVec, rightVec;
         glm_quat_rotatev(spaceship->r, zaxis, forwardVec);
         glm_quat_rotatev(spaceship->r, xaxis, rightVec);
         
-        LineVertex *verts = (LineVertex*)gunfire->msh->vvtx.arr;
-        int fired = 0;
-        
+        Vertex *verts = (Vertex*)gunfire->msh->vvtx.arr;
+
+        int fired = 0;        
         for(int i = 0; i < MAX_SHOTS && fired < 2; i++) {
             // Check if slot is inactive using alpha
             if(verts[i*2].color[3] < 0.01f) { // Inactive slot
                 vec3 offset;
-                float side = (fired == 0) ? -0.03f : 0.03f;
+                float side = (fired == 0) ? -0.135f : 0.135f;
                 glm_vec3_scale(rightVec, side, offset);
                 
                 vec3 start, end;
@@ -386,10 +428,13 @@ static void Loop(V7V *v7v) {
                 fired++;
             }
         }
+        gun_energy = 0;
     }
+
+    if(gun_energy < 4) gun_energy++;
     
     // Update all shots in mesh
-    LineVertex *verts = (LineVertex*)gunfire->msh->vvtx.arr;
+    Vertex *verts = (Vertex*)gunfire->msh->vvtx.arr;
     vec_resize(&gunfire->msh->vidx, 0); // Clear indices, rebuild only for active shots
     
     for(int i = 0; i < MAX_SHOTS; i++) {
@@ -440,9 +485,6 @@ static void Loop(V7V *v7v) {
     }
     
     V7VUploadMesh(v7v, gunfire->msh);
-
-
-
 
 }
 
